@@ -3,6 +3,7 @@ import os
 from conan import ConanFile
 from conan.tools.cmake import CMake
 from conan.tools.env import VirtualRunEnv
+from conan.tools.cmake import CMakeToolchain, CMake, CMakeDeps, cmake_layout
 from conan.tools.files import load
 
 
@@ -45,7 +46,7 @@ class LibCosimCConan(ConanFile):
         "doxygen/[>=1.8]",
     )
     requires = (
-        "libcosim/0.11.0@osp/testing-feature_conan-2",
+        "libcosim/0.11.0",
         "boost/[>=1.71.0]",
     )
 
@@ -56,6 +57,46 @@ class LibCosimCConan(ConanFile):
     # Build steps
     generators = "CMakeDeps", "CMakeToolchain"
 
+    def generate(self):
+        # Copy dependencies to the folder where executables (tests, mainly)
+        # will be placed, so it's easier to run them.
+        bindir = os.path.join(
+            self.build_folder,
+            "output",
+            str(self.settings.build_type).lower(),
+            "bin")
+        dldir = (bindir if self.settings.os == "Windows" else
+            os.path.join(self.build_folder, "dist", "lib"))
+        dependency_libs = {
+            # For some dependencies, we only want a subset of the libraries
+            "boost" : [
+                "boost_atomic*",
+                "boost_chrono*",
+                "boost_container*",
+                "boost_context*",
+                "boost_date_time*",
+                "boost_filesystem*",
+                "boost_locale*",
+                "boost_log*",
+                "boost_log_setup*",
+                "boost_program_options*",
+                "boost_random*",
+                "boost_regex*",
+                "boost_serialization*",
+                "boost_system*",
+                "boost_thread*"],
+            "thrift": ["thrift", "thriftd"],
+        }
+        for req, dep in self.dependencies.items():
+            self._import_dynamic_libs(dep, dldir, dependency_libs.get(req.ref.name, ["*"]))
+        if self.dependencies["libcosim"].options.proxyfmu:
+            self._import_executables(self.dependencies["proxyfmu"], bindir, ["*"])
+
+        # Generate build system
+        CMakeToolchain(self).generate()
+        CMakeDeps(self).generate()
+
+ 
     def build(self):
         cmake = CMake(self)
         cmake.configure()
