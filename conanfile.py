@@ -3,8 +3,9 @@ import os
 from conan import ConanFile
 from conan.tools.cmake import CMake
 from conan.tools.env import VirtualRunEnv
+from conan.tools.env import VirtualBuildEnv
 from conan.tools.cmake import CMakeToolchain, CMake, CMakeDeps, cmake_layout
-from conan.tools.files import load
+from conan.tools.files import copy, load
 
 
 class LibCosimCConan(ConanFile):
@@ -44,6 +45,7 @@ class LibCosimCConan(ConanFile):
     tool_requires = (
         "cmake/[>=3.15]",
         "doxygen/[>=1.8]",
+        "patchelf/[>=0.18]",
     )
     requires = (
         "libcosim/0.11.0",
@@ -54,9 +56,11 @@ class LibCosimCConan(ConanFile):
     exports = "version.txt"
     exports_sources = "*"
 
-    # Build steps
-    generators = "CMakeDeps", "CMakeToolchain"
+   # Build steps
 
+    def layout(self):
+        cmake_layout(self)
+        
     def generate(self):
         # Copy dependencies to the folder where executables (tests, mainly)
         # will be placed, so it's easier to run them.
@@ -113,6 +117,30 @@ class LibCosimCConan(ConanFile):
         cmake = CMake(self)
         cmake.install()
         cmake.build(target="install-doc")
+
+    def _import_dynamic_libs(self, dependency, target_dir, patterns):
+        if dependency.options.get_safe("shared", False):
+            if self.settings.os == "Windows":
+                depdirs = dependency.cpp_info.bindirs
+            else:
+                depdirs = dependency.cpp_info.libdirs
+            for depdir in depdirs:
+                for pattern in patterns:
+                    patternx = pattern+".dll" if self.settings.os == "Windows" else "lib"+pattern+".so*"
+                    files = copy(self, patternx, depdir, target_dir, keep_path=False)
+                    self._update_rpath(files, "$ORIGIN")
+
+    def _import_executables(self, dependency, target_dir, patterns=["*"]):
+        for bindir in dependency.cpp_info.bindirs:
+            for pattern in patterns:
+                patternx = pattern+".exe" if self.settings.os == "Windows" else pattern
+                files = copy(self, patternx, bindir, target_dir, keep_path=False)
+                self._update_rpath(files, "$ORIGIN/../lib")
+
+    def _update_rpath(self, files, new_rpath):
+        if files and self.settings.os == "Linux":
+            with VirtualBuildEnv(self).environment().vars(self).apply():
+                self.run("patchelf --set-rpath '" + new_rpath + "' '" + ("' '".join(files)) + "'")
 
     def package_info(self):
         self.cpp_info.libs = [ "cosimc" ]
